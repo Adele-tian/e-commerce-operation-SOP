@@ -10,6 +10,9 @@ if config.config_file_name is not None:
 from app.database import Base
 from app.models.product import Product
 from app.models.keyword import Keyword
+from app.models.competitor import CompetitorAnalysis
+from app.models.content import GeneratedContent
+from app.models.analytics import AnalyticsSnapshot
 
 target_metadata = Base.metadata
 
