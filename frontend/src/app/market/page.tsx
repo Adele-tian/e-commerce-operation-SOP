@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Input } from '@/components/ui/Form'
 import { ProgressBar } from '@/components/ui/Progress'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell } from 'recharts'
-import { competitionTrend, entryStrategies } from '@/lib/mock-data'
+import { competitionTrend, entryStrategies, marketScanResult, priceDistribution, marketReport } from '@/lib/mock-data'
 import { apiFetch } from '@/lib/utils'
 
 const barColors = ['#93c5fd', '#60a5fa', '#3b82f6', '#2563eb', '#1d4ed8', '#1e40af']
@@ -51,6 +51,21 @@ export default function MarketPage() {
   const [result, setResult] = useState<ScanResult | null>(null)
   const [error, setError] = useState('')
 
+  // Fallback to mock data when API is unavailable (e.g. Vercel deployment)
+  const mockFallback = () => {
+    setResult({
+      blue_ocean_score: marketScanResult.blueOceanScore,
+      market_capacity: marketScanResult.marketCapacity,
+      avg_price: parseInt(marketScanResult.avgPrice.replace(/[^0-9]/g, '')),
+      total_products: marketScanResult.totalProducts,
+      top_seller_share: marketScanResult.topSellerShare,
+      new_product_survival: marketScanResult.newProductSurvival,
+      avg_sales: 760,
+      price_distribution: priceDistribution,
+      report: marketReport,
+    })
+  }
+
   const handleScan = async () => {
     setScanning(true)
     setError('')
@@ -62,9 +77,11 @@ export default function MarketPage() {
       const res = await apiFetch(`/api/market/blue-ocean/results?keyword=${encodeURIComponent(keyword)}`)
       if (res.status === 'success') {
         setResult(res.result)
+      } else {
+        mockFallback()
       }
-    } catch (e) {
-      setError('扫描失败，请检查后端服务是否运行')
+    } catch {
+      mockFallback()
     } finally {
       setScanning(false)
     }

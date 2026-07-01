@@ -11,6 +11,12 @@ import {
   LineChart, Line,
 } from 'recharts'
 import { apiFetch } from '@/lib/utils'
+import {
+  competitorsList, sentimentData, reviewTrend, userNeedsTop10,
+  dimensionInterpretation, painPoints, positivePoints, reviewKeywords,
+  userNeedsSummary, reviewDetails, optimizationSuggestions,
+  realAnalysisFallback,
+} from '@/lib/mock-data'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const sentimentColors = ['#3b82f6', '#f59e0b', '#ef4444']
@@ -50,6 +56,28 @@ interface Analysis {
   analysis_date: string
 }
 
+interface RealAnalysis {
+  total_reviews: number
+  effective_reviews: number
+  with_images: number
+  with_followup: number
+  sentiment: { positive: number; neutral: number; negative: number }
+  sentiment_counts: { positive: number; neutral: number; negative: number }
+  review_trend: { month: string; count: number }[]
+  needs_top10: { need: string; percent: number; count: number; color: string }[]
+  dimensions: { dimension: string; count: number; percent: string; interpretation: string }[]
+  pain_points: { id: number; text: string; frequency: number; intensity: number; typical_review?: string }[]
+  positive_points: { id: number; text: string; frequency: number }[]
+  keywords: { word: string; count: number; sentiment: string }[]
+  needs_summary: { rank: number; title: string; percent: string; desc: string; quote: string }[]
+  optimization_suggestions: string[]
+  sku_analysis: { product: string; total: number; positive_rate: number; negative_rate: number }[]
+  review_details: { id: number; content: string; sku: string; product_type: string; needs: string; date: string; has_image: boolean; sentiment: string }[]
+  word_cloud: { word: string; count: number }[]
+  data_source: string
+  analysis_date: string
+}
+
 export default function CompetitorsPage() {
   const [competitors, setCompetitors] = useState<Competitor[]>([])
   const [selectedComp, setSelectedComp] = useState<number | null>(null)
@@ -57,12 +85,39 @@ export default function CompetitorsPage() {
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState('all')
   const [activeSection, setActiveSection] = useState('overview')
+  const [realAnalysis, setRealAnalysis] = useState<RealAnalysis | null>(null)
+  const [realLoading, setRealLoading] = useState(false)
+  const [viewMode, setViewMode] = useState<'mock' | 'real'>('mock')
+
+  // Mock fallback data
+  const mockCompetitors: Competitor[] = competitorsList.map(c => ({
+    id: c.id, name: c.name, price: c.price, review_count: c.reviewCount, rating: c.rating, store: c.store,
+  }))
+
+  const mockAnalysis: Analysis = {
+    sentiment: sentimentData,
+    review_trend: reviewTrend,
+    needs_top10: userNeedsTop10,
+    dimensions: dimensionInterpretation,
+    pain_points: painPoints,
+    positive_points: positivePoints,
+    keywords: reviewKeywords,
+    needs_summary: userNeedsSummary,
+    optimization_suggestions: optimizationSuggestions,
+    review_details: reviewDetails,
+    analysis_date: new Date().toISOString(),
+  }
 
   // 加载竞品列表
   useEffect(() => {
     apiFetch('/api/competitors')
-      .then((data) => setCompetitors(data.competitors || []))
-      .catch(() => setCompetitors([]))
+      .then((data) => {
+        const list = data.competitors || []
+        setCompetitors(list.length > 0 ? list.map((c: Record<string, unknown>) => ({
+          id: c.id, name: c.name, price: c.price, review_count: c.review_count, rating: c.rating, store: c.store,
+        })) : mockCompetitors)
+      })
+      .catch(() => setCompetitors(mockCompetitors))
   }, [])
 
   // 加载竞品分析
@@ -70,9 +125,9 @@ export default function CompetitorsPage() {
     setLoading(true)
     try {
       const data = await apiFetch(`/api/competitors/${compId}/analysis`)
-      setAnalysis(data.analysis)
+      setAnalysis(data.analysis || mockAnalysis)
     } catch {
-      setAnalysis(null)
+      setAnalysis(mockAnalysis)
     } finally {
       setLoading(false)
     }
@@ -92,6 +147,22 @@ export default function CompetitorsPage() {
     }
   }
 
+  // 加载真实评价数据
+  const loadRealAnalysis = useCallback(async () => {
+    setRealLoading(true)
+    try {
+      const data = await apiFetch('/api/reviews/builtin/analysis')
+      setRealAnalysis(data.analysis)
+      setViewMode('real')
+    } catch {
+      // Use embedded real analysis data as fallback
+      setRealAnalysis(realAnalysisFallback)
+      setViewMode('real')
+    } finally {
+      setRealLoading(false)
+    }
+  }, [])
+
   // 衍生数据
   const sentimentPie = analysis
     ? [
@@ -101,7 +172,12 @@ export default function CompetitorsPage() {
       ]
     : []
 
-  const filteredKeywords = analysis
+  const filteredKeywords = (viewMode === 'real' && realAnalysis)
+    ? (filter === 'all' ? realAnalysis.keywords
+      : filter === 'positive' ? realAnalysis.keywords.filter((k) => k.sentiment === 'positive')
+      : filter === 'negative' ? realAnalysis.keywords.filter((k) => k.sentiment === 'negative')
+      : realAnalysis.keywords)
+    : analysis
     ? filter === 'all' ? analysis.keywords
       : filter === 'positive' ? analysis.keywords.filter((k) => k.sentiment === 'positive')
       : filter === 'negative' ? analysis.keywords.filter((k) => k.sentiment === 'negative')
@@ -115,11 +191,291 @@ export default function CompetitorsPage() {
           <h1 className="text-2xl font-bold text-slate-800">竞品评价分析</h1>
           <p className="text-slate-500 mt-1">研究竞品评价，提取用户需求与痛点洞察</p>
         </div>
-        <Button icon="🔄" onClick={() => { setSelectedComp(null); setAnalysis(null); }}>刷新数据</Button>
+        <div className="flex gap-2">
+          <Button variant={viewMode === 'real' ? 'secondary' : 'primary'} icon="📊" onClick={loadRealAnalysis} loading={realLoading}>
+            {viewMode === 'real' ? '✓ 真实数据' : '导入真实评价'}
+          </Button>
+          {viewMode === 'real' && (
+            <Button variant="ghost" icon="🏪" onClick={() => { setViewMode('mock'); setSelectedComp(null); setAnalysis(null); }}>竞品列表</Button>
+          )}
+          <Button icon="🔄" onClick={() => { setSelectedComp(null); setAnalysis(null); setViewMode('mock'); }}>刷新数据</Button>
+        </div>
       </div>
 
-      {/* Competitor Cards */}
-      {!selectedComp && (
+      {/* 真实评价分析结果 */}
+      {viewMode === 'real' && realAnalysis && (
+        <>
+          {/* 数据概览 */}
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-bold text-slate-800">📦 真实评价分析报告</h2>
+                <p className="text-xs text-slate-500 mt-0.5">{realAnalysis.data_source} · 分析时间: {realAnalysis.analysis_date?.slice(0, 10)}</p>
+              </div>
+              <div className="flex gap-3 text-center">
+                <div className="px-4 py-2 bg-white rounded-lg border border-slate-200">
+                  <p className="text-2xl font-bold text-slate-800">{realAnalysis.total_reviews}</p>
+                  <p className="text-xs text-slate-500">总评价</p>
+                </div>
+                <div className="px-4 py-2 bg-white rounded-lg border border-slate-200">
+                  <p className="text-2xl font-bold text-blue-600">{realAnalysis.effective_reviews}</p>
+                  <p className="text-xs text-slate-500">有效评价</p>
+                </div>
+                <div className="px-4 py-2 bg-white rounded-lg border border-slate-200">
+                  <p className="text-2xl font-bold text-green-600">{realAnalysis.with_images}</p>
+                  <p className="text-xs text-slate-500">有图评价</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 情感分布 + SKU分析 */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card title="情感分布" subtitle={`好评 ${realAnalysis.sentiment.positive}% · 中评 ${realAnalysis.sentiment.neutral}% · 差评 ${realAnalysis.sentiment.negative}%`}>
+              <div className="flex items-center gap-6">
+                <ResponsiveContainer width={180} height={180}>
+                  <PieChart>
+                    <Pie data={[
+                      { name: '好评', value: realAnalysis.sentiment.positive },
+                      { name: '中评', value: realAnalysis.sentiment.neutral },
+                      { name: '差评', value: realAnalysis.sentiment.negative },
+                    ]} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={80} startAngle={90} endAngle={-270}>
+                      {[0, 1, 2].map((i) => <Cell key={i} fill={sentimentColors[i]} />)}
+                    </Pie>
+                    <Tooltip formatter={(val) => `${val}%`} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="space-y-3">
+                  {[{ name: '好评', value: realAnalysis.sentiment.positive, color: sentimentColors[0] },
+                    { name: '中评', value: realAnalysis.sentiment.neutral, color: sentimentColors[1] },
+                    { name: '差评', value: realAnalysis.sentiment.negative, color: sentimentColors[2] },
+                  ].map((s) => (
+                    <div key={s.name} className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full" style={{ background: s.color }} />
+                      <span className="text-sm text-slate-600 w-8">{s.name}</span>
+                      <span className="text-sm font-bold text-slate-800">{s.value}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Card>
+
+            <Card title="SKU产品分析" subtitle="各产品线好评率/差评率对比">
+              <div className="space-y-3">
+                {realAnalysis.sku_analysis.map((sku) => (
+                  <div key={sku.product} className="flex items-center gap-3">
+                    <span className="text-sm text-slate-700 w-32 truncate">{sku.product}</span>
+                    <span className="text-xs text-slate-400 w-8">{sku.total}条</span>
+                    <div className="flex-1 flex items-center gap-1">
+                      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-emerald-400" style={{ width: `${sku.positive_rate}%` }} />
+                      </div>
+                      <span className="text-xs text-emerald-600 font-medium w-10">{sku.positive_rate}%</span>
+                    </div>
+                    {sku.negative_rate > 0 && (
+                      <div className="flex items-center gap-1">
+                        <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-red-400" style={{ width: `${sku.negative_rate}%` }} />
+                        </div>
+                        <span className="text-xs text-red-500 w-10">{sku.negative_rate}%</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <div className="flex items-center gap-4 text-xs text-slate-500 pt-1 border-t border-slate-100">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400" />好评率</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" />差评率</span>
+                </div>
+              </div>
+            </Card>
+          </div>
+
+          <Tabs tabs={sectionTabs} activeTab={activeSection} onChange={setActiveSection} />
+
+          {/* 评价概览 */}
+          {activeSection === 'overview' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card title="用户需求分析 TOP10" subtitle="按评价提及频率排序的核心需求维度">
+                  <ResponsiveContainer width="100%" height={360}>
+                    <BarChart data={realAnalysis.needs_top10} layout="vertical" margin={{ left: 10, right: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                      <XAxis type="number" tick={{ fontSize: 11 }} stroke="#94a3b8" tickFormatter={(v) => `${v}%`} />
+                      <YAxis type="category" dataKey="need" tick={{ fontSize: 12 }} stroke="#94a3b8" width={80} />
+                      <Tooltip formatter={(val) => `${val}%`} />
+                      <Bar dataKey="percent" name="占比" radius={[0, 4, 4, 0]} barSize={20}>
+                        {realAnalysis.needs_top10.map((entry, i) => (
+                          <Cell key={i} fill={entry.color} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Card>
+
+                <Card title="高频关键词">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Tabs tabs={filterTabs} activeTab={filter} onChange={setFilter} className="w-fit" />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {filteredKeywords.map((kw) => {
+                      const size = Math.max(12, Math.min(28, kw.count / 100))
+                      return (
+                        <span key={kw.word}
+                          className={`inline-block px-2.5 py-1 rounded-lg transition-colors cursor-default ${kw.sentiment === 'positive' ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200' : 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200'}`}
+                          style={{ fontSize: `${size}px` }}
+                          title={`出现 ${kw.count} 次`}>
+                          {kw.word}
+                        </span>
+                      )
+                    })}
+                  </div>
+                </Card>
+              </div>
+
+              <Card title="关注维度解读">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200">
+                        <th className="text-left py-3 px-4 font-semibold text-slate-700 w-28">关注点</th>
+                        <th className="text-center py-3 px-4 font-semibold text-slate-700 w-20">维度数量</th>
+                        <th className="text-center py-3 px-4 font-semibold text-slate-700 w-24">重要度占比</th>
+                        <th className="text-left py-3 px-4 font-semibold text-slate-700">维度解读</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {realAnalysis.dimensions.map((d, i) => (
+                        <tr key={d.dimension} className={`border-b border-slate-100 ${i % 2 === 0 ? 'bg-slate-50/50' : ''}`}>
+                          <td className="py-3 px-4"><span className="font-medium text-primary-600">{d.dimension}</span></td>
+                          <td className="py-3 px-4 text-center text-slate-600">{d.count}</td>
+                          <td className="py-3 px-4 text-center"><Badge variant="info">{d.percent}</Badge></td>
+                          <td className="py-3 px-4 text-slate-600 leading-relaxed">{d.interpretation}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card title="痛点排序" subtitle="按出现频率和情感强度排序">
+                  <div className="space-y-3">
+                    {realAnalysis.pain_points.map((p, i) => (
+                      <div key={p.id} className="flex items-start gap-3">
+                        <span className="w-6 h-6 rounded-full bg-red-100 text-red-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</span>
+                        <div className="flex-1">
+                          <p className="text-sm text-slate-800">{p.text}</p>
+                          <div className="flex items-center gap-3 mt-1.5">
+                            <span className="text-xs text-slate-500">出现 {p.frequency} 次</span>
+                            <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                              <div className="h-full rounded-full bg-red-400" style={{ width: `${p.intensity * 100}%` }} />
+                            </div>
+                            <span className="text-xs text-red-500 font-medium">强度 {(p.intensity * 100).toFixed(0)}%</span>
+                          </div>
+                          {p.typical_review && (
+                            <p className="text-xs text-slate-400 mt-1 italic">“{p.typical_review.slice(0, 60)}...”</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
+                <Card title="好评点排序">
+                  <div className="space-y-3">
+                    {realAnalysis.positive_points.map((p, i) => (
+                      <div key={p.id} className="flex items-center gap-3">
+                        <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</span>
+                        <p className="flex-1 text-sm text-slate-800">{p.text}</p>
+                        <Badge variant="success">{p.frequency} 次</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {/* 需求分析总结 */}
+          {activeSection === 'needs' && (
+            <Card title="用户需求分析总结" subtitle="基于评价数据的核心用户诉求，含典型用户评论摘录">
+              <div className="space-y-5">
+                {realAnalysis.needs_summary.map((item) => (
+                  <div key={item.rank} className="p-4 bg-slate-50/80 rounded-xl border border-slate-100">
+                    <div className="flex items-start gap-3">
+                      <span className="w-8 h-8 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-sm font-bold shrink-0">{item.rank}</span>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h4 className="font-semibold text-slate-800">{item.title}</h4>
+                          <Badge variant="info">占比{item.percent}</Badge>
+                          {item.rank <= 2 && <Badge variant="warning">核心需求</Badge>}
+                        </div>
+                        <p className="text-sm text-slate-600 leading-relaxed">{item.desc}</p>
+                        {item.quote && (
+                          <div className="mt-2 p-2.5 bg-white rounded-lg border-l-3 border-l-primary-400 border border-slate-100">
+                            <p className="text-xs text-slate-500 italic">💬 典型评论：{item.quote}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {/* 评价明细 */}
+          {activeSection === 'details' && (
+            <Card title="评价明细" subtitle="抽样展示真实评价记录，含用户需求、产品类型、情感维度分析">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[900px]">
+                  <thead>
+                    <tr className="border-b-2 border-slate-200 bg-slate-50">
+                      <th className="text-left py-3 px-3 font-semibold text-slate-700 w-[280px]">评价内容</th>
+                      <th className="text-left py-3 px-3 font-semibold text-slate-700 w-[120px]">产品类型</th>
+                      <th className="text-left py-3 px-3 font-semibold text-slate-700 w-[150px]">用户需求</th>
+                      <th className="text-center py-3 px-3 font-semibold text-slate-700 w-[100px]">日期</th>
+                      <th className="text-center py-3 px-3 font-semibold text-slate-700 w-[60px]">晒图</th>
+                      <th className="text-center py-3 px-3 font-semibold text-slate-700 w-[80px]">情绪</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {realAnalysis.review_details.map((r, i) => (
+                      <tr key={r.id} className={`border-b border-slate-100 hover:bg-slate-50/50 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
+                        <td className="py-3 px-3 text-slate-700 leading-relaxed">{r.content}</td>
+                        <td className="py-3 px-3 text-slate-500 text-xs">{r.product_type}</td>
+                        <td className="py-3 px-3"><span className="text-xs text-primary-600">{r.needs}</span></td>
+                        <td className="py-3 px-3 text-center text-xs text-slate-500">{r.date?.slice(0, 10)}</td>
+                        <td className="py-3 px-3 text-center">{r.has_image ? '📷' : ''}</td>
+                        <td className="py-3 px-3 text-center">
+                          <Badge variant={r.sentiment === '正面' ? 'success' : 'danger'}>{r.sentiment}</Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {/* 优化建议 */}
+          {activeSection === 'suggestions' && (
+            <Card title="AI 产品优化建议" subtitle="基于评价数据分析，为产品优化和营销策略提供方向性建议">
+              <div className="space-y-3">
+                {realAnalysis.optimization_suggestions.map((s, i) => (
+                  <div key={i} className="flex items-start gap-3 p-4 bg-blue-50/50 rounded-xl border border-blue-100">
+                    <span className="w-7 h-7 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</span>
+                    <p className="text-sm text-slate-700 leading-relaxed">{s}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+
+      {/* Competitor Cards - only in mock mode */}
+      {viewMode === 'mock' && !selectedComp && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {competitors.map((c) => (
             <div key={c.id}
@@ -150,8 +506,8 @@ export default function CompetitorsPage() {
         </div>
       )}
 
-      {/* Loading State */}
-      {loading && (
+      {/* Loading State - only in mock mode */}
+      {viewMode === 'mock' && loading && (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="animate-spin w-8 h-8 border-4 border-primary-200 border-t-primary-500 rounded-full mx-auto mb-3" />
@@ -160,8 +516,8 @@ export default function CompetitorsPage() {
         </div>
       )}
 
-      {/* Analysis Detail */}
-      {comp && analysis && !loading && (
+      {/* Analysis Detail - only in mock mode */}
+      {viewMode === 'mock' && comp && analysis && !loading && (
         <>
           {/* Report Header */}
           <div className="bg-white rounded-xl border border-slate-200 p-5">

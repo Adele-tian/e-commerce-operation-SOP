@@ -14,6 +14,7 @@ from app.api.video import router as video_router
 from app.api.social import router as social_router
 from app.api.analytics import router as analytics_router
 from app.api.auth import router as auth_router
+from app.api.reviews import router as reviews_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -41,3 +42,4 @@ app.include_router(detail_page_router, prefix="/api")
 app.include_router(video_router, prefix="/api")
 app.include_router(social_router, prefix="/api")
 app.include_router(analytics_router, prefix="/api")
+app.include_router(reviews_router, prefix="/api")
