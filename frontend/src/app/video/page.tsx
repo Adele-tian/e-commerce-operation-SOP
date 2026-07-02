@@ -18,6 +18,9 @@ export default function VideoPage() {
   const [genSteps, setGenSteps] = useState(mockSteps)
   const [genProgress, setGenProgress] = useState(0)
   const [reviewStatus, setReviewStatus] = useState('draft')
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [sceneImages, setSceneImages] = useState<string[]>([])
+  const [genMessage, setGenMessage] = useState('')
 
   const totalDuration = scenes.reduce((sum, s) => sum + s.duration, 0)
 
@@ -34,6 +37,8 @@ export default function VideoPage() {
         setSelectedType(scriptData.video_type || 'showcase')
       }
       if (scriptData?.review_status) setReviewStatus(scriptData.review_status)
+      if (scriptData?.video_url) setVideoUrl(scriptData.video_url)
+      if (scriptData?.scene_images?.length) setSceneImages(scriptData.scene_images)
     } catch {
       // fallback to mock
     }
@@ -64,13 +69,32 @@ export default function VideoPage() {
   // Start video generation
   const handleGenerateVideo = async () => {
     setGenerating(true)
+    setGenMessage('正在生成分镜图片...')
     try {
       const data = await apiFetch('/api/video/generate', { method: 'POST' })
       if (data.steps) setGenSteps(data.steps)
       if (data.progress) setGenProgress(data.progress)
+      if (data.video_url) {
+        setVideoUrl(data.video_url)
+        setGenMessage('视频生成完成！')
+      }
+      if (data.scene_images?.length) setSceneImages(data.scene_images)
+      if (data.message) setGenMessage(data.message)
     } catch {
-      // simulate progress
       setGenProgress(45)
+      setGenMessage('视频生成需要启动后端服务')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const handleDownloadVideo = () => {
+    if (videoUrl) {
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      const url = videoUrl.startsWith('http') ? videoUrl : `${API_BASE}${videoUrl}`
+      const a = document.createElement('a')
+      a.href = url; a.download = 'video.mp4'; a.target = '_blank'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
     }
   }
 
@@ -115,9 +139,14 @@ export default function VideoPage() {
           <Button variant="secondary" icon="✨" onClick={handleGenerateScript} loading={generating}>
             {generating ? 'AI生成中...' : 'AI生成脚本'}
           </Button>
-          <Button onClick={handleGenerateVideo} icon="🎬">
-            生成视频
+          <Button onClick={handleGenerateVideo} icon="🎬" loading={generating}>
+            {generating ? '生成中...' : '生成视频'}
           </Button>
+          {videoUrl && (
+            <Button variant="primary" icon="⬇" onClick={handleDownloadVideo}>
+              下载视频
+            </Button>
+          )}
         </div>
       </div>
 
@@ -134,7 +163,7 @@ export default function VideoPage() {
       </div>
 
       {/* Generation Progress */}
-      {generating && (
+      {(generating || genMessage) && (
         <Card title="生成进度">
           <div className="flex items-center gap-4">
             {genSteps.map((step, i) => {
@@ -157,8 +186,9 @@ export default function VideoPage() {
             })}
           </div>
           <div className="mt-4">
-            <ProgressBar value={genProgress} label="总进度" color="primary" />
+            <ProgressBar value={genProgress} label={`总进度 ${genProgress}%`} color="primary" />
           </div>
+          {genMessage && <p className="mt-2 text-sm text-slate-600">{genMessage}</p>}
         </Card>
       )}
 
@@ -195,43 +225,69 @@ export default function VideoPage() {
 
         {/* Center: Video Preview */}
         <Card title="视频预览" className="lg:col-span-4">
+          {/* Video Player */}
           <div className="aspect-video bg-slate-900 rounded-lg overflow-hidden relative mb-4">
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center">
-                <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mx-auto mb-3 cursor-pointer hover:bg-white/30 transition-colors">
-                  <span className="text-white text-2xl ml-1">▶</span>
+            {videoUrl ? (
+              <video
+                src={videoUrl.startsWith('http') ? videoUrl : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${videoUrl}`}
+                controls
+                className="w-full h-full object-cover"
+                autoPlay
+                loop
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center">
+                  <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mx-auto mb-3 cursor-pointer hover:bg-white/30 transition-colors">
+                    <span className="text-white text-2xl ml-1">▶</span>
+                  </div>
+                  <p className="text-white/70 text-sm">{scene?.scene}</p>
+                  <p className="text-white/40 text-xs mt-1">点击“生成视频”开始制作</p>
                 </div>
-                <p className="text-white/70 text-sm">{scene?.scene}</p>
               </div>
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-black/70 to-transparent flex items-end px-3 pb-1">
-              <div className="flex-1 h-1 bg-white/20 rounded-full overflow-hidden">
-                <div className="h-full bg-primary-500 rounded-full" style={{ width: `${((selectedScene + 1) / scenes.length) * 100}%` }} />
+            )}
+            {!videoUrl && (
+              <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-black/70 to-transparent flex items-end px-3 pb-1">
+                <div className="flex-1 h-1 bg-white/20 rounded-full overflow-hidden">
+                  <div className="h-full bg-primary-500 rounded-full" style={{ width: `${((selectedScene + 1) / scenes.length) * 100}%` }} />
+                </div>
+                <span className="text-white/80 text-[10px] ml-2">
+                  {scenes.slice(0, selectedScene + 1).reduce((s, sc) => s + sc.duration, 0)}s / {totalDuration}s
+                </span>
               </div>
-              <span className="text-white/80 text-[10px] ml-2">
-                {scenes.slice(0, selectedScene + 1).reduce((s, sc) => s + sc.duration, 0)}s / {totalDuration}s
-              </span>
-            </div>
+            )}
           </div>
 
+          {/* Scene Thumbnails with real images */}
           <div className="flex gap-2 overflow-x-auto pb-1">
             {scenes.map((s, i) => (
               <button key={s.id}
                 onClick={() => setSelectedScene(i)}
                 className={`shrink-0 w-20 aspect-video rounded border-2 overflow-hidden ${selectedScene === i ? 'border-primary-500' : 'border-slate-200'}`}>
-                <div className="w-full h-full bg-gradient-to-br from-slate-700 to-slate-800 flex items-center justify-center">
-                  <span className="text-white/60 text-xs">{i + 1}</span>
-                </div>
+                {sceneImages[i] ? (
+                  <img src={sceneImages[i]} alt={s.scene} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full bg-gradient-to-br from-slate-700 to-slate-800 flex items-center justify-center">
+                    <span className="text-white/60 text-xs">{i + 1}</span>
+                  </div>
+                )}
               </button>
             ))}
           </div>
 
+          {/* Cover Selection */}
           <div className="mt-4">
             <label className="text-sm font-medium text-slate-700 mb-2 block">封面图</label>
             <div className="flex gap-2">
               {scenes.slice(0, 4).map((s, i) => (
-                <div key={i} className="flex-1 aspect-video rounded border border-slate-200 bg-slate-50 flex items-center justify-center cursor-pointer hover:border-primary-300">
-                  <span className="text-xs text-slate-400">分镜{i + 1}</span>
+                <div key={i} className="flex-1 aspect-video rounded border border-slate-200 overflow-hidden cursor-pointer hover:border-primary-300">
+                  {sceneImages[i] ? (
+                    <img src={sceneImages[i]} alt={`封面${i+1}`} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full bg-slate-50 flex items-center justify-center">
+                      <span className="text-xs text-slate-400">分镜{i + 1}</span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

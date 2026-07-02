@@ -235,12 +235,12 @@ export const imageBriefDefault = {
 }
 
 export const generatedImages = [
-  { id: 1, version: 'V1-A', status: 'approved', score: 4.5, notes: '构图清晰，文案位置合理' },
-  { id: 2, version: 'V1-B', status: 'draft', score: 3.8, notes: '' },
-  { id: 3, version: 'V1-C', status: 'draft', score: 4.0, notes: '' },
-  { id: 4, version: 'V2-A', status: 'pending_review', score: 4.2, notes: '优化了配色方案' },
-  { id: 5, version: 'V2-B', status: 'draft', score: 3.5, notes: '' },
-  { id: 6, version: 'V2-C', status: 'published', score: 4.8, notes: '最终选用版本' },
+  { id: 1, version: 'V1-A', status: 'approved', score: 4.5, notes: '构图清晰，文案位置合理', image_url: 'https://picsum.photos/seed/img1a/1024/1024', thumbnail_url: 'https://picsum.photos/seed/img1a/300/300', prompt: '电商主图-产品居中-蓝白渐变' },
+  { id: 2, version: 'V1-B', status: 'draft', score: 3.8, notes: '', image_url: 'https://picsum.photos/seed/img1b/1024/1024', thumbnail_url: 'https://picsum.photos/seed/img1b/300/300', prompt: '电商主图-左图右文-白色简约' },
+  { id: 3, version: 'V1-C', status: 'draft', score: 4.0, notes: '', image_url: 'https://picsum.photos/seed/img1c/1024/1024', thumbnail_url: 'https://picsum.photos/seed/img1c/300/300', prompt: '电商主图-场景图-自然风' },
+  { id: 4, version: 'V2-A', status: 'pending_review', score: 4.2, notes: '优化了配色方案', image_url: 'https://picsum.photos/seed/img2a/1024/1024', thumbnail_url: 'https://picsum.photos/seed/img2a/300/300', prompt: '电商主图-产品居中-绿白清新' },
+  { id: 5, version: 'V2-B', status: 'draft', score: 3.5, notes: '', image_url: 'https://picsum.photos/seed/img2b/1024/1024', thumbnail_url: 'https://picsum.photos/seed/img2b/300/300', prompt: '电商主图-成分展示-科技感' },
+  { id: 6, version: 'V2-C', status: 'published', score: 4.8, notes: '最终选用版本', image_url: 'https://picsum.photos/seed/img2c/1024/1024', thumbnail_url: 'https://picsum.photos/seed/img2c/300/300', prompt: '电商主图-产品居中-粉白温柔' },
 ]
 
 // --- 详情页 ---

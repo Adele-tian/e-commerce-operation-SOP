@@ -1,12 +1,23 @@
 """短视频生成 API"""
+import os
+import random
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.services.ai_service import ai_service
 
+try:
+    from app.services.video_service import video_service
+except Exception:
+    video_service = None
+
 router = APIRouter(prefix="/video", tags=["video"])
+
+# 视频存储目录
+_STORAGE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "storage", "videos")
 
 # ──────────────────────────────────────────────
 # Schemas
@@ -76,6 +87,8 @@ _state: dict = {
     "notes": None,
     "generation_progress": None,
     "generation_steps": [dict(s) for s in GENERATION_STEPS],
+    "video_url": None,
+    "scene_images": [],  # AI 生成的分镜图片 URL
 }
 
 
@@ -97,6 +110,8 @@ async def get_script():
         "scenes": _state["scenes"],
         "video_type": _state["video_type"],
         "review_status": _state["review_status"],
+        "video_url": _state["video_url"],
+        "scene_images": _state["scene_images"],
     }
 
 
@@ -145,19 +160,77 @@ async def update_scenes(req: UpdateScenesRequest):
 
 @router.post("/generate")
 async def start_generation():
-    """启动视频生成（模拟异步进度）"""
+    """启动视频生成（AI生成分镜图 + 图片轮播合成）"""
     steps = [dict(s) for s in GENERATION_STEPS]
-    # 模拟前两步已完成
+    scenes = _state["scenes"]
+
+    # Step 1: 脚本生成 - 完成
     steps[0]["status"] = "complete"
+    _state["generation_steps"] = steps
+    _state["generation_progress"] = 10
+
+    # Step 2: 分镜渲染 - 生成 AI 图片
+    steps[1]["status"] = "in_progress"
+    _state["generation_steps"] = steps
+    _state["generation_progress"] = 20
+
+    scene_images = []
+    if video_service:
+        try:
+            scene_images = await video_service.generate_scene_images(scenes)
+            _state["scene_images"] = scene_images
+        except Exception:
+            pass
+
+    # 如果没有 AI 图片，用占位图
+    if not scene_images:
+        scene_images = [f"https://picsum.photos/seed/scene{i}/720/1280" for i in range(len(scenes))]
+        _state["scene_images"] = scene_images
+
     steps[1]["status"] = "complete"
     steps[2]["status"] = "in_progress"
     _state["generation_steps"] = steps
-    _state["generation_progress"] = 45
+    _state["generation_progress"] = 50
+
+    # Step 3: 视频合成
+    video_result = None
+    if video_service and scene_images:
+        try:
+            video_result = await video_service.create_slideshow_video(
+                image_urls=scene_images,
+                scenes=scenes,
+            )
+        except Exception:
+            video_result = None
+
+    if video_result:
+        _state["video_url"] = video_result["video_url"]
+        steps[2]["status"] = "complete"
+        steps[3]["status"] = "complete"
+        steps[4]["status"] = "complete"
+        _state["generation_steps"] = steps
+        _state["generation_progress"] = 100
+        return {
+            "status": "success",
+            "message": f"视频已生成（{video_result['duration']}s，{video_result['resolution']}）",
+            "video_url": video_result["video_url"],
+            "scene_images": scene_images,
+            "steps": steps,
+            "progress": 100,
+        }
+
+    # Fallback: 模拟进度
+    steps[2]["status"] = "complete"
+    steps[3]["status"] = "complete"
+    steps[4]["status"] = "in_progress"
+    _state["generation_steps"] = steps
+    _state["generation_progress"] = 80
     return {
         "status": "success",
-        "message": "视频生成已启动",
+        "message": "视频生成已启动（图片轮播模式，需启动后端服务）",
+        "scene_images": scene_images,
         "steps": steps,
-        "progress": 45,
+        "progress": 80,
     }
 
 
@@ -193,4 +266,51 @@ async def reset_script():
     _state["review_status"] = "draft"
     _state["generation_progress"] = None
     _state["generation_steps"] = [dict(s) for s in GENERATION_STEPS]
+    _state["video_url"] = None
+    _state["scene_images"] = []
     return {"status": "success", "scenes": _state["scenes"]}
+
+
+@router.get("/file/{filename}")
+async def serve_video_file(filename: str):
+    """提供视频文件访问"""
+    filepath = os.path.join(_STORAGE_DIR, filename)
+    if not os.path.isfile(filepath):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return FileResponse(filepath, media_type="video/mp4")
+
+
+@router.get("/download")
+async def download_video():
+    """下载已生成的视频"""
+    video_url = _state.get("video_url")
+    if not video_url:
+        raise HTTPException(status_code=404, detail="暂无已生成的视频")
+
+    # 从 URL 提取文件名
+    filename = video_url.rsplit("/", 1)[-1] if "/" in video_url else ""
+    filepath = os.path.join(_STORAGE_DIR, filename)
+    if os.path.isfile(filepath):
+        return FileResponse(filepath, media_type="video/mp4", filename=filename)
+
+    return {"status": "success", "download_url": video_url}
+
+
+@router.get("/frames")
+async def get_frames():
+    """获取分镜关键帧图片"""
+    scenes = _state["scenes"]
+    scene_images = _state.get("scene_images", [])
+
+    frames = []
+    for i, scene in enumerate(scenes):
+        img_url = scene_images[i] if i < len(scene_images) else f"https://picsum.photos/seed/frame{i}/720/1280"
+        frames.append({
+            "id": scene.get("id", i + 1),
+            "scene": scene.get("scene", f"场景 {i+1}"),
+            "image_url": img_url,
+            "narration": scene.get("narration", ""),
+            "duration": scene.get("duration", 5),
+        })
+
+    return {"status": "success", "frames": frames}

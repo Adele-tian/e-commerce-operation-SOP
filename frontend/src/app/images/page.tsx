@@ -32,6 +32,9 @@ interface ImageItem {
   status: string
   score: number
   notes: string
+  image_url?: string
+  thumbnail_url?: string
+  prompt?: string
 }
 
 interface DesignElement {
@@ -58,6 +61,7 @@ export default function ImagesPage() {
   const [images, setImages] = useState<ImageItem[]>(mockImages)
   const [selectedImg, setSelectedImg] = useState<ImageItem | null>(null)
   const [generating, setGenerating] = useState(false)
+  const [generatingBrief, setGeneratingBrief] = useState(false)
   const [reviewNotes, setReviewNotes] = useState('')
 
   // === 竞品主图分析 ===
@@ -99,6 +103,9 @@ export default function ImagesPage() {
       const newId = images.length + 10
       setImages((prev) => [...prev, ...Array.from({ length: 3 }, (_, i) => ({
         id: newId + i, version: `V3-${String.fromCharCode(65 + i)}`, status: 'draft', score: 3.5 + i * 0.3, notes: '',
+        image_url: `https://picsum.photos/seed/fallback${newId + i}/1024/1024`,
+        thumbnail_url: `https://picsum.photos/seed/fallback${newId + i}/300/300`,
+        prompt: 'AI生成主图（fallback）',
       }))])
     } finally {
       setGenerating(false)
@@ -145,6 +152,34 @@ export default function ImagesPage() {
     }
   }
 
+  const handleGenerateBrief = async () => {
+    setGeneratingBrief(true)
+    try {
+      const res = await apiFetch('/api/images/brief/generate', {
+        method: 'POST',
+        body: JSON.stringify({ product_name: '涂抹面膜', selling_points: brief.selling_points }),
+      })
+      if (res.brief) {
+        setBrief({
+          composition: res.brief.composition || brief.composition,
+          color_scheme: res.brief.color_scheme || brief.color_scheme,
+          copy_text: res.brief.copy_text || brief.copy_text,
+          selling_points: res.brief.selling_points || brief.selling_points,
+        })
+      }
+    } catch { /* keep current */ }
+    finally { setGeneratingBrief(false) }
+  }
+
+  const handleDownload = (img: ImageItem) => {
+    const url = img.image_url
+    if (url) {
+      const a = document.createElement('a')
+      a.href = url; a.download = `${img.version}.jpg`; a.target = '_blank'
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+    }
+  }
+
   const tabs = [
     { id: 'generate', label: '主图生成' },
     { id: 'analysis', label: '竞品主图分析' },
@@ -169,6 +204,9 @@ export default function ImagesPage() {
           {/* Left: Brief Editor */}
           <Card title="设计Brief" className="lg:col-span-3">
             <div className="space-y-4">
+              <Button variant="secondary" size="sm" className="w-full" onClick={handleGenerateBrief} loading={generatingBrief}>
+                {generatingBrief ? 'AI生成中...' : 'AI 自动生成 Brief'}
+              </Button>
               <Textarea label="构图方式" rows={3} value={brief.composition}
                 onChange={(e) => setBrief({ ...brief, composition: e.target.value })} />
               <Textarea label="配色方案" rows={2} value={brief.color_scheme}
@@ -209,12 +247,16 @@ export default function ImagesPage() {
                   <div key={img.id}
                     onClick={() => { setSelectedImg(img); setReviewNotes(img.notes || '') }}
                     className={`relative aspect-square rounded-lg border-2 cursor-pointer transition-all overflow-hidden group ${selectedImg?.id === img.id ? 'border-primary-500 ring-2 ring-primary-200' : 'border-slate-200 hover:border-primary-300'}`}>
-                    <div className="absolute inset-0 bg-gradient-to-br from-primary-100 via-blue-50 to-indigo-100 flex items-center justify-center">
-                      <div className="text-center">
-                        <span className="text-4xl">&#128444;</span>
-                        <p className="text-xs text-slate-500 mt-1">{img.version}</p>
+                    {img.image_url ? (
+                      <img src={img.image_url} alt={img.version} className="absolute inset-0 w-full h-full object-cover" />
+                    ) : (
+                      <div className="absolute inset-0 bg-gradient-to-br from-primary-100 via-blue-50 to-indigo-100 flex items-center justify-center">
+                        <div className="text-center">
+                          <span className="text-4xl">&#128444;</span>
+                          <p className="text-xs text-slate-500 mt-1">{img.version}</p>
+                        </div>
                       </div>
-                    </div>
+                    )}
                     <div className="absolute top-2 right-2">
                       <Badge variant={statusMap[img.status]?.variant || 'default'} className="text-[10px]">{statusMap[img.status]?.label || img.status}</Badge>
                     </div>
@@ -233,7 +275,13 @@ export default function ImagesPage() {
               <div className="flex gap-4 overflow-x-auto pb-2">
                 {images.filter((i) => i.status === 'approved' || i.status === 'published').map((img) => (
                   <div key={img.id} className="shrink-0 w-40">
-                    <div className="aspect-square rounded-lg bg-gradient-to-br from-primary-100 to-indigo-100 flex items-center justify-center mb-2"><span className="text-3xl">&#128444;</span></div>
+                    <div className="aspect-square rounded-lg overflow-hidden mb-2">
+                      {img.image_url ? (
+                        <img src={img.image_url} alt={img.version} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full bg-gradient-to-br from-primary-100 to-indigo-100 flex items-center justify-center"><span className="text-3xl">&#128444;</span></div>
+                      )}
+                    </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium text-slate-700">{img.version}</span>
                       <Badge variant={statusMap[img.status]?.variant || 'default'}>{statusMap[img.status]?.label || img.status}</Badge>
@@ -248,7 +296,13 @@ export default function ImagesPage() {
           <Card title="审核面板" className="lg:col-span-3">
             {selectedImg ? (
               <div className="space-y-4">
-                <div className="aspect-square rounded-lg bg-gradient-to-br from-primary-100 to-indigo-100 flex items-center justify-center"><span className="text-5xl">&#128444;</span></div>
+                <div className="aspect-square rounded-lg overflow-hidden bg-slate-100">
+                  {selectedImg.image_url ? (
+                    <img src={selectedImg.image_url} alt={selectedImg.version} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-primary-100 to-indigo-100 flex items-center justify-center"><span className="text-5xl">&#128444;</span></div>
+                  )}
+                </div>
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <h4 className="font-semibold text-slate-800">{selectedImg.version}</h4>
@@ -266,6 +320,13 @@ export default function ImagesPage() {
                   <Button variant="danger" size="sm" className="w-full" onClick={() => handleReview('reject')}>打回</Button>
                 </div>
                 <Button variant="secondary" size="sm" className="w-full" onClick={() => handleReview('regenerate')}>重新生成</Button>
+                <Button variant="ghost" size="sm" className="w-full" onClick={() => handleDownload(selectedImg)}>下载图片</Button>
+                {selectedImg.prompt && (
+                  <div className="p-3 bg-blue-50 rounded-lg">
+                    <p className="text-xs font-medium text-blue-600 mb-1">生成 Prompt</p>
+                    <p className="text-xs text-slate-600 line-clamp-3">{selectedImg.prompt}</p>
+                  </div>
+                )}
                 {selectedImg.notes && (
                   <div className="p-3 bg-slate-50 rounded-lg">
                     <p className="text-xs font-medium text-slate-600 mb-1">历史记录</p>

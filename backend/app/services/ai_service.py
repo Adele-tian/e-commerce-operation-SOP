@@ -1,13 +1,18 @@
-"""AI 服务封装 - 统一调用通义千问等 AI API"""
+"""AI 服务封装 - 统一调用通义千问、通义万相等 AI API"""
+import asyncio
+import random
+
 import httpx
 from typing import Optional
 from app.config import settings
 
 
 class AIService:
-    """通义千问 API 调用封装"""
+    """通义千问 + 通义万相 API 调用封装"""
 
     QWEN_API_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
+    WANX_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis"
+    TASK_URL = "https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
 
     def __init__(self):
         self.api_key = settings.QWEN_API_KEY
@@ -81,6 +86,71 @@ class AIService:
     def _mock_response(self, prompt: str) -> str:
         """未配置 API Key时的模拟响应"""
         return f"[AI模拟响应] 未配置 QWEN_API_KEY，请设置环境变量后重试。\n\n原始请求: {prompt[:100]}..."
+
+    # ──────────────────────────────────────────
+    # 通义万相 - 图片生成
+    # ──────────────────────────────────────────
+
+    async def generate_image(
+        self,
+        prompt: str,
+        size: str = "1024*1024",
+        n: int = 1,
+        style: str = "<auto>",
+    ) -> list[str]:
+        """调用通义万相生成图片，返回图片 URL 列表。
+
+        未配置 API Key 时返回 picsum 占位图。
+        """
+        if not self.api_key:
+            return self._mock_image_urls(n)
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "X-DashScope-Async": "enable",
+        }
+        payload = {
+            "model": "wanx-v1",
+            "input": {"prompt": prompt},
+            "parameters": {"size": size, "n": n, "style": style},
+        }
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            # 1. 提交异步任务
+            resp = await client.post(self.WANX_URL, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            task_id = data.get("output", {}).get("task_id")
+            if not task_id:
+                raise RuntimeError(f"通义万相未返回 task_id: {data}")
+
+            # 2. 轮询任务状态（2s 间隔，最长 90s）
+            for _ in range(45):
+                await asyncio.sleep(2)
+                poll = await client.get(
+                    self.TASK_URL.format(task_id=task_id),
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                )
+                poll.raise_for_status()
+                result = poll.json()
+                status = result.get("output", {}).get("task_status")
+                if status == "SUCCEEDED":
+                    results = result["output"].get("results", [])
+                    return [r["url"] for r in results if "url" in r]
+                if status == "FAILED":
+                    msg = result.get("output", {}).get("message", "unknown")
+                    raise RuntimeError(f"通义万相生成失败: {msg}")
+            raise TimeoutError("通义万相任务超时（90s）")
+
+    def _mock_image_urls(self, n: int = 1) -> list[str]:
+        """未配置 Key 时返回占位图"""
+        base = random.randint(100, 900)
+        return [f"https://picsum.photos/seed/{base + i}/1024/1024" for i in range(n)]
+
+    # ──────────────────────────────────────────
+    # 文本生成辅助
+    # ──────────────────────────────────────────
 
     async def analyze_reviews(self, reviews: list[dict], product_name: str) -> dict:
         """AI分析竞品评价，提取情感、痛点、好评点"""

@@ -1,14 +1,21 @@
-"""图片处理服务 - 基于 Pillow"""
+"""图片处理服务 - AI生图 + Pillow 后处理"""
 import io
 import os
+import random
+import string
 from datetime import datetime
 from typing import Optional
+
+import httpx
 
 try:
     from PIL import Image, ImageDraw, ImageFont
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
+
+# 本地存储目录
+_STORAGE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "storage", "images")
 
 
 class ImageService:
@@ -17,6 +24,14 @@ class ImageService:
     # 淘宝主图尺寸
     MAIN_IMAGE_SIZE = (800, 800)
     DETAIL_PAGE_WIDTH = 750
+
+    # 电商主图 prompt 模板
+    _PROMPT_TEMPLATES = {
+        "product_center": "电商产品主图，{product}居中放置，45度傄拍视角，{bg_desc}，专业产品摄影，高清质感，白底商品图风格，{color_desc}",
+        "lifestyle": "电商产品主图，{product}在真实使用场景中，{bg_desc}，温馨自然光线，生活场景摄影，{color_desc}",
+        "ingredient": "电商产品主图，{product}与核心成分可视化展示，{bg_desc}，科技感，成分分子图示，{color_desc}",
+        "before_after": "电商产品主图，使用前后对比效果展示，{product}，{bg_desc}，分屏布局，{color_desc}",
+    }
 
     # 默认配色
     COLOR_SCHEMES = {
@@ -29,6 +44,89 @@ class ImageService:
     def __init__(self):
         if not PIL_AVAILABLE:
             raise RuntimeError("Pillow 未安装，请执行: pip install Pillow")
+
+    # ──────────────────────────────────────────────
+    # AI 生图
+    # ──────────────────────────────────────────────
+
+    async def generate_main_images(
+        self,
+        brief: dict,
+        product_name: str = "涂抹面膜",
+        count: int = 3,
+    ) -> list[dict]:
+        """根据设计 Brief 调用通义万相生成主图。
+
+        返回:
+            [{"image_url": "...", "thumbnail_url": "...", "prompt": "..."}, ...]
+        """
+        from app.services.ai_service import ai_service
+
+        composition = brief.get("composition", "产品居中45°傄拍")
+        color_scheme = brief.get("color_scheme", "浅蓝+白色")
+        copy_text = brief.get("copy_text", "")
+        selling_points = brief.get("selling_points", [])
+
+        # 构建生图 prompt（英文效果更好）
+        bg_desc = f"背景{composition.split('，')[0] if '，' in composition else composition}"
+        color_desc = f"配色方案：{color_scheme}"
+
+        templates = list(self._PROMPT_TEMPLATES.values())
+        results = []
+
+        for i in range(min(count, 4)):
+            tmpl = templates[i % len(templates)]
+            prompt = tmpl.format(
+                product=product_name,
+                bg_desc=bg_desc,
+                color_desc=color_desc,
+            )
+            # 追加卖点描述
+            if selling_points:
+                prompt += f"，产品卖点标签：{'、'.join(selling_points[:3])}"
+
+            try:
+                urls = await ai_service.generate_image(prompt, size="1024*1024", n=1)
+                url = urls[0] if urls else ""
+            except Exception:
+                url = f"https://picsum.photos/seed/{random.randint(100,999)}/1024/1024"
+
+            # 下载到本地
+            local_path = await self.download_and_store(url) if url.startswith("http") else None
+
+            results.append({
+                "image_url": url,
+                "local_path": local_path,
+                "thumbnail_url": url,   # 简化：复用同一 URL
+                "prompt": prompt,
+            })
+
+        return results
+
+    async def download_and_store(self, image_url: str) -> Optional[str]:
+        """下载图片到本地 storage/images/ 目录"""
+        os.makedirs(_STORAGE_DIR, exist_ok=True)
+        suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+        filename = f"{datetime.now().strftime('%Y%m%d')}_{suffix}.jpg"
+        filepath = os.path.join(_STORAGE_DIR, filename)
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(image_url)
+                resp.raise_for_status()
+                with open(filepath, "wb") as f:
+                    f.write(resp.content)
+            return filepath
+        except Exception:
+            return None
+
+    def get_storage_url(self, local_path: str) -> str:
+        """将本地文件路径转为可访问的 URL"""
+        return f"/api/images/file/{os.path.basename(local_path)}"
+
+    # ──────────────────────────────────────────────
+    # Pillow 后处理
+    # ──────────────────────────────────────────────
 
     def create_placeholder(
         self,
